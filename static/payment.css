@@ -1,0 +1,45 @@
+.payment {
+  padding: 0 14px 14px;
+  background: var(--surface);
+}
+
+.pay-card {
+  margin: 0 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface-soft);
+  color: var(--text);
+  box-shadow: 0 5px 14px rgba(12, 31, 70, 0.12);
+}
+
+.pay-card b {
+  display: block;
+}
+
+.pay-card button {
+  margin: 12px 8px 0 0;
+  padding: 10px 13px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pay-card button:hover {
+  background: var(--accent-hover);
+}
+
+.pay-card #demo-fail {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+
+.pay-card #demo-fail:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
