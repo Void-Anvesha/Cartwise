@@ -149,8 +149,10 @@ def create_checkout_order(product_id: str, quantity: int, session_id: str | None
             remote = razorpay.Client(auth=(key_id, secret)).order.create({"amount":amount*100,"currency":"INR","receipt":local_id})
             order.update({"id":remote["id"],"provider":"razorpay"})
         except Exception as exc:
-            audit("create_order", {"product_id":product_id,"quantity":quantity,"amount":amount}, {"ok":False,"reason":"razorpay_order_failed","error":type(exc).__name__})
-            raise HTTPException(502, "Razorpay order creation failed. Please verify your Razorpay credentials and try again.") from exc
+            error_type = type(exc).__name__
+            error_message = str(exc).strip() or "no error message provided"
+            audit("create_order", {"product_id":product_id,"quantity":quantity,"amount":amount}, {"ok":False,"reason":"razorpay_order_failed","error_type":error_type,"error_message":error_message})
+            raise HTTPException(502, f"Razorpay order creation failed ({error_type}): {error_message}") from exc
     orders[order["id"]] = order
     audit("create_order", {"product_id":product_id,"quantity":quantity,"amount":amount}, {"ok":True,"order_id":order["id"],"provider":order["provider"]})
     return {"ok":True,"order":order,"razorpay_key":key_id if order["provider"] == "razorpay" else None}
