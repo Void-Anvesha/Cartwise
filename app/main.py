@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-load_dotenv()
+load_dotenv(override=True)
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
 DATA = ROOT / "data"; DATA.mkdir(exist_ok=True)
@@ -41,6 +41,10 @@ def audit(action: str, inputs: dict, result: dict) -> None:
 def public(product: dict) -> dict:
     return {k: product[k] for k in ("id", "name", "price", "stock", "category", "color", "sizes", "description")}
 def money(amount: int) -> str: return f"₹{amount:,}"
+def razorpay_credentials() -> tuple[str | None, str | None]:
+    key_id = os.getenv("RAZORPAY_KEY_ID", "").strip() or None
+    secret = os.getenv("RAZORPAY_KEY_SECRET", "").strip() or None
+    return key_id, secret
 def product_by_id(product_id: str) -> dict | None: return next((p for p in CATALOG if p["id"] == product_id), None)
 def natural_list(items: list[str]) -> str:
     if len(items) < 2: return "".join(items)
@@ -137,17 +141,16 @@ def create_checkout_order(product_id: str, quantity: int, session_id: str | None
                 return {"ok":False,"reason":"duplicate_order","order":old}
     local_id = f"local_{uuid.uuid4().hex[:12]}"
     order = {"id":local_id,"product":public(product),"quantity":quantity,"amount":amount,"status":"created","provider":"demo","created_at":now(),"session_id":session_id}
-    key_id, secret = os.getenv("RAZORPAY_KEY_ID"), os.getenv("RAZORPAY_KEY_SECRET")
+    key_id = os.getenv("RAZORPAY_KEY_ID", "").strip() or None
+    secret = os.getenv("RAZORPAY_KEY_SECRET", "").strip() or None
     if key_id and secret:
         try:
             import razorpay
             remote = razorpay.Client(auth=(key_id, secret)).order.create({"amount":amount*100,"currency":"INR","receipt":local_id})
             order.update({"id":remote["id"],"provider":"razorpay"})
         except Exception as exc:
-            # Demo checkout keeps the conversation usable during a temporary
-            # Razorpay outage; the failure remains visible in the audit trail.
-            order["fallback_reason"] = "payment_provider_unavailable"
-            audit("payment_provider_fallback", {"product_id":product_id,"quantity":quantity,"amount":amount}, {"provider":"razorpay","fallback_provider":"demo","error":type(exc).__name__})
+            audit("create_order", {"product_id":product_id,"quantity":quantity,"amount":amount}, {"ok":False,"reason":"razorpay_order_failed","error":type(exc).__name__})
+            raise HTTPException(502, "Razorpay order creation failed. Please verify your Razorpay credentials and try again.") from exc
     orders[order["id"]] = order
     audit("create_order", {"product_id":product_id,"quantity":quantity,"amount":amount}, {"ok":True,"order_id":order["id"],"provider":order["provider"]})
     return {"ok":True,"order":order,"razorpay_key":key_id if order["provider"] == "razorpay" else None}
@@ -262,7 +265,10 @@ def update_payment(order_id: str, update: PaymentUpdate):
         if not update.payment_id or not update.signature: raise HTTPException(400,"A Razorpay payment signature is required.")
         try:
             import razorpay
-            razorpay.Client(auth=(os.environ["RAZORPAY_KEY_ID"],os.environ["RAZORPAY_KEY_SECRET"])).utility.verify_payment_signature({"razorpay_order_id":order_id,"razorpay_payment_id":update.payment_id,"razorpay_signature":update.signature})
+            key_id, secret = razorpay_credentials()
+            if not key_id or not secret:
+                raise HTTPException(500,"Razorpay credentials are not loaded on the server.")
+            razorpay.Client(auth=(key_id,secret)).utility.verify_payment_signature({"razorpay_order_id":order_id,"razorpay_payment_id":update.payment_id,"razorpay_signature":update.signature})
         except Exception as exc:
             audit("check_payment_status", {"order_id":order_id,"payment_id":update.payment_id}, {"status":"signature_verification_failed"})
             raise HTTPException(400,"Payment verification failed.") from exc
@@ -271,3 +277,4 @@ def update_payment(order_id: str, update: PaymentUpdate):
     return order
 @app.post("/api/chat")
 def chat(request: ChatRequest): return response(request.message, request.session_id or "anonymous")
+
