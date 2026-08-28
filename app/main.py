@@ -144,8 +144,10 @@ def create_checkout_order(product_id: str, quantity: int, session_id: str | None
             remote = razorpay.Client(auth=(key_id, secret)).order.create({"amount":amount*100,"currency":"INR","receipt":local_id})
             order.update({"id":remote["id"],"provider":"razorpay"})
         except Exception as exc:
-            audit("create_order", {"product_id":product_id,"quantity":quantity,"amount":amount}, {"ok":False,"reason":"payment_provider_error","error":type(exc).__name__})
-            raise HTTPException(502, "Razorpay could not create the test order. Check your test credentials and package installation.") from exc
+            # Demo checkout keeps the conversation usable during a temporary
+            # Razorpay outage; the failure remains visible in the audit trail.
+            order["fallback_reason"] = "payment_provider_unavailable"
+            audit("payment_provider_fallback", {"product_id":product_id,"quantity":quantity,"amount":amount}, {"provider":"razorpay","fallback_provider":"demo","error":type(exc).__name__})
     orders[order["id"]] = order
     audit("create_order", {"product_id":product_id,"quantity":quantity,"amount":amount}, {"ok":True,"order_id":order["id"],"provider":order["provider"]})
     return {"ok":True,"order":order,"razorpay_key":key_id if order["provider"] == "razorpay" else None}
@@ -167,7 +169,8 @@ def response(message: str, session_id: str) -> dict:
         if result["ok"]:
             order = result["order"]; addon = next((p for p in CATALOG if p["category"] == "accessories" and p["stock"] > 0), None)
             extra = f" After payment, you may also like {addon['name']} for {money(addon['price'])}." if addon else ""
-            return {"reply":f"Your order for {order['quantity']} × {order['product']['name']} ({money(order['amount'])}) is ready. Open secure checkout below.{extra}","products":[],"summary":{"product":order["product"],"quantity":order["quantity"],"amount":order["amount"]},"order":order,"razorpay_key":result["razorpay_key"]}
+            checkout_message = "Razorpay is temporarily unavailable, so demo checkout is shown below." if order.get("fallback_reason") else "Open secure checkout below."
+            return {"reply":f"Your order for {order['quantity']} × {order['product']['name']} ({money(order['amount'])}) is ready. {checkout_message}{extra}","products":[],"summary":{"product":order["product"],"quantity":order["quantity"],"amount":order["amount"]},"order":order,"razorpay_key":result["razorpay_key"]}
         if result["reason"] == "out_of_stock":
             alternatives = [public(p) for p in CATALOG if p["category"] == result["product"]["category"] and p["stock"] > 0]
             return {"reply":f"{result['product']['name']} is out of stock. Here are available alternatives.","products":alternatives,"order":None}
