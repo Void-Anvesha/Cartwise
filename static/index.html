@@ -4,51 +4,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cartwise</title>
-  <link rel="stylesheet" href="/static/style.css?v=6">
+  <link rel="stylesheet" href="/static/style.css?v=7">
   <style>
-    .color-chip{display:inline-flex!important;align-items:center;gap:5px;width:max-content;margin-top:7px!important;padding:3px 7px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text)!important;font-size:.72rem!important;font-weight:700}
-    .color-chip i{display:block;width:9px;height:9px;border:1px solid rgba(20,33,61,.35);border-radius:50%;background:#8793a8}
-    .color-blue i{background:#3383db}.color-black i{background:#202938}.color-red i{background:#e0494d}.color-green i{background:#2fa76b}.color-white i{background:#fff}.color-silver i{background:#aeb9c7}
-    .products{grid-template-columns:repeat(auto-fit,minmax(210px,1fr));width:min(100%,620px);max-width:none}
-    .product{min-height:126px;padding:15px 16px;box-shadow:0 5px 14px rgba(12,31,70,.12);transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
-    .product b{display:block;font-size:.94rem;letter-spacing:-.015em}.product .color-chip{margin:9px 0 4px!important}
-    .product:hover{transform:translateY(-2px);box-shadow:0 10px 20px rgba(12,31,70,.18)}
-    .messages{scrollbar-width:thin;scrollbar-color:var(--accent) transparent}.messages::-webkit-scrollbar{width:8px}.messages::-webkit-scrollbar-track{background:transparent}.messages::-webkit-scrollbar-thumb{background:var(--accent);border:2px solid var(--surface);border-radius:99px}
-    .order-confirmation{align-self:flex-start;min-width:280px;padding:15px 16px;border:1px solid #2bb673;border-radius:14px;background:linear-gradient(135deg,#123e35,#185644);box-shadow:0 8px 18px rgba(0,0,0,.18);color:#effff6}.order-confirmation strong,.order-confirmation span{display:block}.order-confirmation span{margin-top:3px;color:#b8ecd2;font-size:.86rem}.order-id{margin-top:12px;padding:8px 10px;border-radius:9px;background:rgba(0,0,0,.2)}.order-id small{display:block;color:#9ee1be;font-size:.65rem;font-weight:800;letter-spacing:.11em}.order-id code{display:block;margin-top:3px;color:#fff;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.82rem;word-break:break-all}
-    main{max-width:1280px}.products{width:100%}
-    @media(max-width:560px){.products{grid-template-columns:1fr;width:100%}.product{min-height:0}}
+    .color-chip{display:inline-flex!important;align-items:center;gap:5px;width:max-content;margin-top:7px!important;padding:3px 7px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text)!important;font-size:.72rem!important;font-weight:700}.color-chip i{display:block;width:9px;height:9px;border:1px solid rgba(20,33,61,.35);border-radius:50%;background:#8793a8}.color-blue i{background:#3383db}.color-black i{background:#202938}.color-red i{background:#e0494d}.color-green i{background:#2fa76b}.color-white i{background:#fff}.color-silver i{background:#aeb9c7}.products{grid-template-columns:repeat(auto-fit,minmax(210px,1fr));width:100%;max-width:none}.product{min-height:126px;padding:15px 16px;box-shadow:0 5px 14px rgba(12,31,70,.12);transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}.product b{display:block;font-size:.94rem;letter-spacing:-.015em}.product .color-chip{margin:9px 0 4px!important}.product:hover{transform:translateY(-2px);box-shadow:0 10px 20px rgba(12,31,70,.18)}.messages{scrollbar-width:thin;scrollbar-color:var(--accent) transparent}.messages::-webkit-scrollbar{width:8px}.messages::-webkit-scrollbar-track{background:transparent}.messages::-webkit-scrollbar-thumb{background:var(--accent);border:2px solid var(--surface);border-radius:99px}.order-confirmation{align-self:flex-start;min-width:280px;padding:15px 16px;border:1px solid #2bb673;border-radius:14px;background:linear-gradient(135deg,#123e35,#185644);box-shadow:0 8px 18px rgba(0,0,0,.18);color:#effff6}.order-confirmation strong,.order-confirmation span{display:block}.order-confirmation span{margin-top:3px;color:#b8ecd2;font-size:.86rem}.order-id{margin-top:12px;padding:8px 10px;border-radius:9px;background:rgba(0,0,0,.2)}.order-id small{display:block;color:#9ee1be;font-size:.65rem;font-weight:800;letter-spacing:.11em}.order-id code{display:block;margin-top:3px;color:#fff;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.82rem;word-break:break-all}main{max-width:1600px}@media(max-width:560px){.products{grid-template-columns:1fr}.product{min-height:0}}
   </style>
   <link rel="stylesheet" href="/static/payment.css?v=1">
+  <link rel="stylesheet" href="/static/agent.css?v=5">
 </head>
-<body>
-  <main>
-    <header class="topbar">
-      <a class="brand" href="/" aria-label="Cartwise home"><span class="brand-mark">C</span><span>Cartwise</span></a>
-      <div><a class="text-button" href="/merchant" title="Open the Merchant Command Center for revenue, controls, and audit logs" aria-label="Merchant Command Center" style="text-decoration:none;margin-right:8px">Merchant dashboard</a><button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme">☾</button></div>
-    </header>
-    <section class="hero">
-      <p class="eyebrow">SHOPPING, SIMPLIFIED</p>
-      <h1>Find your next <span>favourite.</span></h1>
-      <p>Tell us what you need and get helpful, catalog-backed recommendations.</p>
+<body><main>
+  <header class="topbar"><a class="brand" href="/" aria-label="Cartwise home"><span class="brand-mark">C</span><span>Cartwise</span></a><div><a class="text-button" href="/merchant" title="Open the Merchant Command Center" aria-label="Merchant Command Center" style="text-decoration:none;margin-right:8px">Merchant dashboard</a><button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme">☾</button></div></header>
+  <section class="hero"><p class="eyebrow">SHOPPING, SIMPLIFIED</p><h1>Find your next <span>favourite.</span></h1></section>
+  <div class="dual-panel-container">
+    <section class="chat-shell" aria-label="Shopping assistant"><header class="chat-head"><div><p class="status"><i></i> Online now</p><h2>Cartwise assistant</h2></div><button id="clear-chat" class="text-button" type="button">New chat</button></header><div id="messages" class="messages"><div class="bot">Hi! How can I help you find the right product today?</div></div><div class="quick-prompts" id="quick-prompts" aria-label="Catalog suggestions"></div><form id="chat-form"><input id="message" placeholder="Ask about a product…" autocomplete="off" aria-label="Message the assistant"><button type="submit" aria-label="Send message">Send →</button></form><div id="payment" class="payment"></div></section>
+    <section class="agent-workspace" aria-labelledby="agent-title">
+      <header class="agent-head"><div><p class="status"><i></i> Agent ready</p><h2 id="agent-title">AI buyer agent</h2></div><button id="agent-reset" class="text-button" type="button">New request</button></header>
+      <div class="agent-body"><p class="agent-intro">Give it one goal. It will inspect the catalog, choose one product, and submit the order through merchant guardrails.</p><p class="agent-route">Goal <b>→</b> Gemini <b>→</b> Guardrails <b>→</b> Order</p>
+        <form id="agent-form" class="agent-command"><label for="agent-goal">Shopping goal</label><textarea id="agent-goal" required maxlength="1000" rows="4" placeholder="Buy the best running shoes for a long, comfortable run"></textarea><button id="agent-run" type="submit">Run agent →</button></form>
+        <div class="agent-examples quick-prompts" aria-label="Example goals"><button type="button" data-agent-goal="Buy the cheapest in-stock running shoes under ₹3,000, size 9">Best value under ₹3,000</button><button type="button" data-agent-goal="Buy the best shoes for a long, comfortable run, size 9; price is not a concern">Best for a long run</button><button type="button" data-agent-goal="Buy the most expensive in-stock item available">Test merchant limits</button></div>
+        <div id="agent-progress" class="agent-progress" role="status" aria-live="polite" hidden><span class="typing"><i></i><i></i><i></i></span><b>Agent working…</b></div><div id="agent-steps" class="agent-steps" aria-live="polite"></div><div id="agent-result" class="agent-result" hidden></div><div id="agent-payment" class="agent-payment payment"></div>
+      </div>
     </section>
-    <section class="chat-shell" aria-label="Shopping assistant">
-      <header class="chat-head">
-        <div><p class="status"><i></i> Online now</p><h2>Cartwise assistant</h2></div>
-        <button id="clear-chat" class="text-button" type="button">New chat</button>
-      </header>
-      <div id="messages" class="messages"><div class="bot">Hi! How can I help you find the right product today?</div></div>
-      <div class="quick-prompts" id="quick-prompts" aria-label="Catalog suggestions"></div>
-      <form id="chat-form"><input id="message" placeholder="Ask about a product…" autocomplete="off" aria-label="Message the assistant"><button type="submit" aria-label="Send message">Send →</button></form>
-      <div id="payment" class="payment"></div>
-    </section>
-    <section class="agent-shell" aria-labelledby="agent-title">
-      <header class="agent-head"><div><p class="agent-kicker">AUTONOMOUS MODE</p><h2 id="agent-title">Autonomous Buyer Agent</h2><p>Give it one goal. It independently chooses a product and creates the order through the same merchant guardrails.</p></div><span class="agent-badge">AI → API</span></header>
-      <form id="agent-form" class="agent-form"><label for="agent-goal">Shopping goal</label><div><input id="agent-goal" required maxlength="1000" placeholder='e.g. “Buy the cheapest in-stock running shoes under ₹3,000”'><button id="agent-run" type="submit">Run agent</button></div></form>
-      <div id="agent-progress" class="agent-progress" role="status" aria-live="polite" hidden><div class="agent-progress-bar"></div><span>Agent working…</span></div>
-      <div id="agent-steps" class="agent-steps" aria-live="polite"></div>
-      <div id="agent-result" class="agent-result" hidden></div>
-    </section>
-  </main>
-  <script src="/static/app.js?v=8"></script>
-</body>
+  </div>
+</main><script src="/static/app.js?v=12"></script></body>
 </html>
