@@ -1,8 +1,8 @@
 [
-  {"id":"run-blue-9","name":"StrideRun Aero Blue","price":2799,"stock":8,"category":"running shoes","color":"blue","sizes":[7,8,9,10],"description":"Lightweight daily running shoe with responsive foam cushioning."},
-  {"id":"run-black-9","name":"StrideRun Aero Black","price":2799,"stock":5,"category":"running shoes","color":"black","sizes":[7,8,9,10],"description":"Neutral running shoe with breathable mesh upper."},
-  {"id":"run-red-9","name":"StrideRun Sprint Red","price":2499,"stock":0,"category":"running shoes","color":"red","sizes":[8,9,10],"description":"Speed-focused running shoe. Deliberately out of stock for the demo."},
-  {"id":"trail-green","name":"TrailForge Green","price":3299,"stock":4,"category":"trail shoes","color":"green","sizes":[7,8,9,10],"description":"Grippy trail shoe for uneven terrain."},
-  {"id":"sock-crew","name":"Pace Crew Socks (3-pack)","price":499,"stock":30,"category":"accessories","color":"white","sizes":["free"],"description":"Moisture-wicking running socks."},
-  {"id":"bottle-steel","name":"Hydra Steel Bottle","price":699,"stock":18,"category":"accessories","color":"silver","sizes":["free"],"description":"750 ml insulated bottle for long runs."}
+  {"id":"run-blue-9","name":"StrideRun Aero Blue","price":2799,"stock":8,"category":"running shoes","color":"blue","sizes":[7,8,9,10],"description":"Lightweight daily running shoe with responsive foam cushioning.","upsell_with":["sock-crew","bottle-steel"]},
+  {"id":"run-black-9","name":"StrideRun Aero Black","price":2799,"stock":5,"category":"running shoes","color":"black","sizes":[7,8,9,10],"description":"Neutral running shoe with breathable mesh upper.","upsell_with":["sock-crew","bottle-steel"]},
+  {"id":"run-red-9","name":"StrideRun Sprint Red","price":2499,"stock":0,"category":"running shoes","color":"red","sizes":[8,9,10],"description":"Speed-focused running shoe. Deliberately out of stock for the demo.","upsell_with":["sock-crew"]},
+  {"id":"trail-green","name":"TrailForge Green","price":3299,"stock":4,"category":"trail shoes","color":"green","sizes":[7,8,9,10],"description":"Grippy trail shoe for uneven terrain.","upsell_with":["bottle-steel","sock-crew"]},
+  {"id":"sock-crew","name":"Pace Crew Socks (3-pack)","price":499,"stock":30,"category":"accessories","color":"white","sizes":["free"],"description":"Moisture-wicking running socks.","upsell_with":[]},
+  {"id":"bottle-steel","name":"Hydra Steel Bottle","price":699,"stock":18,"category":"accessories","color":"silver","sizes":["free"],"description":"750 ml insulated bottle for long runs.","upsell_with":[]}
 ]

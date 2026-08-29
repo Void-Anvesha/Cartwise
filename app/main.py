@@ -1,282 +1,313 @@
-import json
-import os
-import re
-import uuid
+import json, os, re, uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
-
+from typing import Any, Literal
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-load_dotenv(override=True)
-ROOT = Path(__file__).resolve().parent.parent
-CATALOG = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
-DATA = ROOT / "data"; DATA.mkdir(exist_ok=True)
-AUDIT_FILE = DATA / "audit.jsonl"
-MAX_QUANTITY, MAX_ORDER_VALUE = 5, 10_000
-app = FastAPI(title="Cartwise")
-app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
-orders: dict[str, dict[str, Any]] = {}
-sessions: dict[str, dict[str, Any]] = {}
+load_dotenv(override=False)
+ROOT=Path(__file__).resolve().parent.parent; DATA=ROOT/"data"; DATA.mkdir(exist_ok=True)
+CATALOG=json.loads((ROOT/"catalog.json").read_text(encoding="utf-8"))
+AUDIT,ORDERS,ATTEMPTS,CONFIG,CAMPAIGN=DATA/"audit.jsonl",DATA/"orders.json",DATA/"attempts.json",DATA/"merchant_config.json",DATA/"campaign.json"
+
+def read(path, default):
+    try:return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError,json.JSONDecodeError):return default
+orders:dict[str,dict[str,Any]]=read(ORDERS,{}); attempts:dict[str,dict[str,Any]]=read(ATTEMPTS,{}); sessions={}
+app=FastAPI(title="Cartwise",description="Conversational and agent-to-agent commerce API")
+app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 
 class ChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=1000)
-    session_id: str | None = Field(default=None, max_length=100)
+    message:str=Field(min_length=1,max_length=1000); session_id:str|None=None
 class CreateOrderRequest(BaseModel):
-    product_id: str
-    quantity: int = Field(ge=1, le=MAX_QUANTITY)
+    product_id:str; quantity:int=Field(ge=1); size:int|str|None=None; reasoning:str|None=Field(default=None,max_length=500)
+    upsell_source:bool=False; suggested_after:str|None=None; actor:Literal["autonomous_agent"]="autonomous_agent"
 class PaymentUpdate(BaseModel):
-    status: str
-    payment_id: str | None = None
-    signature: str | None = None
+    status:str; payment_id:str|None=None; signature:str|None=None
+class MerchantConfig(BaseModel):
+    max_order_value:int=Field(ge=1,le=10_000_000); max_quantity:int=Field(ge=1,le=1000)
+class BrowserEvent(BaseModel):
+    event:str
+    order_id:str|None=None
+    detail:str|None=Field(default=None,max_length=500)
+class AgentDecisionRequest(BaseModel):
+    goal:str=Field(min_length=3,max_length=1000)
+    products:list[dict[str,Any]]|None=None
 
-def now() -> str: return datetime.now(timezone.utc).isoformat()
-def audit(action: str, inputs: dict, result: dict) -> None:
-    with AUDIT_FILE.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"timestamp": now(), "action": action, "inputs": inputs, "result": result}) + "\n")
-def public(product: dict) -> dict:
-    return {k: product[k] for k in ("id", "name", "price", "stock", "category", "color", "sizes", "description")}
-def money(amount: int) -> str: return f"₹{amount:,}"
-def razorpay_credentials() -> tuple[str | None, str | None]:
-    key_id = os.getenv("RAZORPAY_KEY_ID", "").strip() or None
-    secret = os.getenv("RAZORPAY_KEY_SECRET", "").strip() or None
-    return key_id, secret
-def product_by_id(product_id: str) -> dict | None: return next((p for p in CATALOG if p["id"] == product_id), None)
-def natural_list(items: list[str]) -> str:
-    if len(items) < 2: return "".join(items)
-    if len(items) == 2: return " and ".join(items)
-    return ", ".join(items[:-1]) + ", and " + items[-1]
-def quantity_in(text: str) -> int:
-    without_budget = re.sub(r"(?:under|below|less than|upto|up to)\s*(?:₹|rs\.?|inr)?\s*[0-9,]+", "", text.lower())
-    match = re.search(r"\b(\d{1,4})\s*(?:pairs?|pair|pieces?|units?|x|running|trail|shoes?|socks?|bottles?)\b", without_budget)
-    return int(match.group(1)) if match else 1
-def price_limit_in(text: str) -> int | None:
-    match = re.search(r"(?:under|below|less than|upto|up to)\s*(?:₹|rs\.?|inr)?\s*([0-9,]+)", text.lower())
-    return int(match.group(1).replace(",", "")) if match else None
+def now():return datetime.now(timezone.utc).isoformat()
+def limits():return {"max_quantity":5,"max_order_value":10000,**read(CONFIG,{})}
+def save_orders():ORDERS.write_text(json.dumps(orders,indent=2,ensure_ascii=False),encoding="utf-8")
+def save_attempts():ATTEMPTS.write_text(json.dumps(attempts,indent=2,ensure_ascii=False),encoding="utf-8")
+def reject_attempt(failure_reason,inputs):
+    attempt_id=f"attempt_{uuid.uuid4().hex[:12]}"
+    attempts[attempt_id]={"id":attempt_id,"status":"rejected","failure_reason":failure_reason,"created_at":now(),"inputs":inputs}
+    save_attempts()
+def audit_category(tool,result):
+    if tool in {"checkout_rendered","razorpay_sdk_loaded","payment_attempted","checkout_dismissed","checkout_error","create_order_called","razorpay_order_created","select_product"}:return "technical"
+    if tool=="search_catalog":return "business" if result.get("status") in {"no_match","ambiguous"} else "technical"
+    if tool=="check_payment_status":return "business" if result.get("status") in {"completed","paid","failed","signature_verification_failed"} else "technical"
+    return "business"
+def log(tool,inputs,result,reasoning,category=None):
+    entry={"timestamp":now(),"tool":tool,"action":tool,"actor":inputs.get("actor","system"),"input":inputs,"inputs":inputs,"reasoning":reasoning,"result":result,"category":category or audit_category(tool,result)}
+    with AUDIT.open("a",encoding="utf-8") as f:f.write(json.dumps(entry,ensure_ascii=False)+"\n")
+def product(pid):return next((p for p in CATALOG if p["id"]==pid),None)
+def public(p):
+    keys=("id","name","category","price","stock","color","sizes","description")
+    return {**{k:p[k] for k in keys},"currency":"INR","upsell_with":p.get("upsell_with",[])}
+def money(n):return f"₹{n:,}"
+def qty(text):
+    clean=re.sub(r"(?:under|below|less than|up to)\s*(?:₹|rs\.?|inr)?\s*[0-9,]+","",text.lower())
+    m=re.search(r"\b(\d{1,4})\s*(?:pairs?|pieces?|units?|x|shoes?|socks?|bottles?)\b",clean); return int(m.group(1)) if m else 1
+def budget(text):
+    m=re.search(r"(?:under|below|less than|up to)\s*(?:₹|rs\.?|inr)?\s*([0-9,]+)",text.lower()); return int(m.group(1).replace(",","")) if m else None
 
-def search_catalog(query: str, max_price: int | None = None) -> dict:
-    synonyms = {"shoe":"shoes", "sneaker":"shoes", "sneakers":"shoes", "hydration":"bottle", "sock":"socks", "accessory":"accessories"}
-    ignored = {
-        "show", "me", "i", "want", "need", "give", "tell", "have", "any",
-        "something", "for", "a", "an", "the", "please", "under", "below",
-        "than", "price", "cost", "much", "less", "expensive", "cheaper", "of", "with", "pairs", "pair",
-        "which", "what", "how", "do", "you", "is", "are", "in", "there", "s", "available",
-        "availability", "stock", "sizes", "size", "compare", "comparison",
-        "difference", "between", "and", "cheapest", "lowest",
-    }
-    terms = {synonyms.get(w, w) for w in re.findall(r"[a-z]+", query.lower())} - ignored
-    matches = [public(p) for p in CATALOG if (not terms or all(t in " ".join(str(v).lower() for v in p.values()) for t in terms)) and (max_price is None or p["price"] <= max_price)]
-    status = "no_match" if not matches else "ambiguous" if len(matches) > 1 else "exact_match"
-    result = {"status": status, "matches": matches, "available_categories": sorted({p["category"] for p in CATALOG})}
-    audit("search_catalog", {"query": query, "max_price": max_price}, {"status": status, "matches": len(matches), "product_ids": [p["id"] for p in matches]})
-    return result
+def call_gemini(prompt,json_mode=False):
+    key=os.getenv("GEMINI_API_KEY","").strip()
+    if not key:raise HTTPException(503,"GEMINI_API_KEY is not configured on the server")
+    try:
+        from google import genai
+        config={"response_mime_type":"application/json"} if json_mode else None
+        response=genai.Client(api_key=key).models.generate_content(model=os.getenv("GEMINI_MODEL","gemini-2.5-flash"),contents=prompt,config=config)
+        if not response.text:raise ValueError("Gemini returned an empty response")
+        return response.text.strip()
+    except HTTPException:raise
+    except Exception as exc:raise HTTPException(502,f"Gemini request failed: {exc}") from exc
 
-def match_product(text: str) -> dict | None:
-    lowered = text.lower()
-    for product in CATALOG:
-        if product["id"].lower() in lowered or product["name"].lower() in lowered: return product
-    colors = [p for p in CATALOG if p["color"] in lowered]
-    return colors[0] if colors and any(w in lowered for w in ("shoe", "one", "pair", "blue", "black", "red", "green")) else None
+def autonomous_decision(goal):
+    available=[public(p) for p in CATALOG if p["stock"]>0]
+    prompt=f'''You are an autonomous shopping agent. Select exactly one product that best satisfies the user's goal.
+Use only the supplied catalog. Quantity must be 1. Size must be a listed size, or null only when the product has no sizes.
+Return only JSON with this shape: {{"product_id":"...","quantity":1,"size":9,"reasoning":"..."}}
+Goal: {goal}
+Catalog: {json.dumps(available,ensure_ascii=False)}'''
+    try:decision=json.loads(call_gemini(prompt,json_mode=True))
+    except json.JSONDecodeError as exc:raise HTTPException(502,"Gemini returned invalid decision JSON") from exc
+    selected=product(decision.get("product_id")); quantity=decision.get("quantity"); size=decision.get("size")
+    if not selected or selected["stock"]<1:raise HTTPException(502,"Gemini selected an unavailable product")
+    if quantity!=1:raise HTTPException(502,"Gemini returned an invalid quantity")
+    if size is not None and str(size) not in {str(x) for x in selected["sizes"]}:raise HTTPException(502,"Gemini returned an invalid size")
+    if not isinstance(decision.get("reasoning"),str) or not decision["reasoning"].strip():raise HTTPException(502,"Gemini omitted its reasoning")
+    return {"product_id":selected["id"],"quantity":1,"size":size,"reasoning":decision["reasoning"].strip()}
 
-def request_intent(text: str) -> str | None:
-    lowered = text.lower()
-    if any(word in lowered for word in ("compare", "comparison", "difference", " versus ", " vs ")):
-        return "compare"
-    if any(word in lowered for word in ("cheapest", "cheaper", "lowest price", "least expensive", "cost less")):
-        return "cheapest"
-    if any(word in lowered for word in ("size", "sizes", "fit")):
-        return "sizes"
-    if any(word in lowered for word in ("in stock", "available", "availability", "stock")):
-        return "availability"
-    if any(word in lowered for word in ("price", "cost", "how much")):
-        return "price"
-    return None
+def search_catalog(query,max_price=None):
+    synonyms={"shoe":"shoes","sneaker":"shoes","sneakers":"shoes","hydration":"bottle","sock":"socks"}
+    ignored=set("show me i want need any something for a an the please under below than price cost much less of with pair pairs which what how do you is are in there available availability stock sizes size compare comparison difference between and cheapest".split())
+    terms={synonyms.get(w,w) for w in re.findall(r"[a-z]+",query.lower())}-ignored
+    found=[public(p) for p in CATALOG if (not terms or all(t in " ".join(map(lambda v:str(v).lower(),p.values())) for t in terms)) and (max_price is None or p["price"]<=max_price)]
+    status="no_match" if not found else "ambiguous" if len(found)>1 else "exact_match"
+    log("search_catalog",{"query":query,"max_price":max_price},{"status":status,"product_ids":[p["id"] for p in found]},f"The customer asked for {query!r}; catalog search grounds the answer in merchant inventory.")
+    return status,found
 
-def product_facts(product: dict, intent: str) -> str:
-    availability = f"{product['stock']} in stock" if product["stock"] else "currently out of stock"
-    if intent == "sizes":
-        return f"{product['name']} is available in sizes {natural_list([str(size) for size in product['sizes']])}. It is {availability}."
-    if intent == "availability":
-        return f"{product['name']} is {availability}."
-    return f"{product['name']} costs {money(product['price'])}. It is {availability}."
+def named_product(text):
+    low=text.lower()
+    for p in CATALOG:
+        if p["id"].lower() in low or p["name"].lower() in low:return p
+    colors=[p for p in CATALOG if p["color"] in low]
+    return colors[0] if colors and any(w in low for w in ("shoe","one","pair","blue","black","red","green")) else None
 
-def comparison_facts(products: list[dict]) -> str:
-    details = "; ".join(
-        f"{product['name']}: {money(product['price'])}, sizes {natural_list([str(size) for size in product['sizes']])}, "
-        f"{'in stock' if product['stock'] else 'out of stock'}"
-        for product in products
-    )
-    return f"Here is the comparison: {details}."
+def upsell_for(product_id):
+    base=product(product_id)
+    if not base:return None
+    return next((product(candidate) for candidate in base.get("upsell_with",[]) if product(candidate) and product(candidate)["stock"]>0),None)
 
-def compared_products(text: str) -> list[dict]:
-    lowered = text.lower()
-    selected = [product for product in CATALOG if product["name"].lower() in lowered]
-    selected.extend(product for product in CATALOG if product["color"] in re.findall(r"[a-z]+", lowered))
-    return list({product["id"]: product for product in selected}.values())
-
-def create_checkout_order(product_id: str, quantity: int, session_id: str | None = None) -> dict:
-    product = product_by_id(product_id)
-    if not product:
-        audit("guardrail_blocked", {"product_id": product_id, "quantity": quantity}, {"reason": "unknown_product"})
-        raise HTTPException(404, "That product is not in the catalog and cannot be charged.")
-    if quantity > MAX_QUANTITY:
-        audit("guardrail_blocked", {"product_id": product_id, "quantity": quantity}, {"reason":"max_quantity", "limit":MAX_QUANTITY})
-        return {"ok":False, "reason":"max_quantity"}
-    if product["stock"] < quantity:
-        audit("create_order", {"product_id":product_id,"quantity":quantity}, {"ok":False,"reason":"out_of_stock","stock":product["stock"]})
-        return {"ok":False,"reason":"out_of_stock","product":public(product)}
-    amount = product["price"] * quantity
-    if amount > MAX_ORDER_VALUE:
-        audit("guardrail_blocked", {"product_id":product_id,"quantity":quantity,"amount":amount}, {"reason":"max_order_value","limit":MAX_ORDER_VALUE})
-        return {"ok":False,"reason":"max_order_value"}
+def create_checkout_order(product_id,quantity,session_id=None,size=None,reasoning=None,upsell_source=False,suggested_after=None,actor="autonomous_agent"):
+    p=product(product_id); inp={"product_id":product_id,"quantity":quantity,"size":size,"actor":actor}; guard=limits()
+    reason=reasoning or f"The autonomous buyer selected {product_id} and requested {quantity} unit(s) through the commerce API."
+    log("create_order_called",inp,{"validation":"started"},reason)
+    if not p:
+        reject_attempt("unknown_product",inp); log("guardrail_blocked",inp,{"reason":"unknown_product"},"The product is absent from the server-owned catalog."); raise HTTPException(404,"Product not found")
+    if size is not None and str(size) not in {str(x) for x in p["sizes"]}:
+        out={"ok":False,"reason":"invalid_size","available_sizes":p["sizes"]}; reject_attempt("invalid_size",inp); log("guardrail_blocked",inp,out,"The requested size is not offered for this product."); return out
+    if quantity>guard["max_quantity"]:
+        out={"ok":False,"reason":"max_quantity","limit":guard["max_quantity"]}; reject_attempt("guardrail_max_quantity",inp); log("guardrail_blocked",inp,out,"The quantity exceeds the merchant-configured per-item limit."); return out
+    if p["stock"]<quantity:
+        out={"ok":False,"reason":"out_of_stock","stock":p["stock"]}; reject_attempt("stock_unavailable",inp); log("create_order",inp,out,"Available inventory cannot satisfy the requested quantity."); return out
+    amount=p["price"]*quantity; inp["amount"]=amount
+    if amount>guard["max_order_value"]:
+        out={"ok":False,"reason":"max_order_value","limit":guard["max_order_value"]}; reject_attempt("guardrail_max_value",inp); log("guardrail_blocked",inp,out,"The server-calculated total exceeds the merchant approval limit."); return out
     if session_id:
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
-        for old in orders.values():
-            if old.get("session_id") == session_id and old["product"]["id"] == product_id and old["quantity"] == quantity and datetime.fromisoformat(old["created_at"]) > cutoff:
-                audit("guardrail_blocked", {"product_id":product_id,"quantity":quantity}, {"reason":"duplicate_order","order_id":old["id"]})
-                return {"ok":False,"reason":"duplicate_order","order":old}
-    local_id = f"local_{uuid.uuid4().hex[:12]}"
-    order = {"id":local_id,"product":public(product),"quantity":quantity,"amount":amount,"status":"created","provider":"demo","created_at":now(),"session_id":session_id}
-    key_id = os.getenv("RAZORPAY_KEY_ID", "").strip() or None
-    secret = os.getenv("RAZORPAY_KEY_SECRET", "").strip() or None
-    if key_id and secret:
+        cutoff=datetime.now(timezone.utc)-timedelta(minutes=5)
+        old=next((o for o in orders.values() if o.get("session_id")==session_id and o["product"]["id"]==product_id and o["quantity"]==quantity and datetime.fromisoformat(o["created_at"])>cutoff),None)
+        if old:
+            out={"ok":False,"reason":"duplicate_order","order":old}; log("guardrail_blocked",inp,{"reason":"duplicate_order","order_id":old["id"]},"A matching recent chat order exists, preventing a duplicate charge."); return out
+    local=f"local_{uuid.uuid4().hex[:12]}"
+    order={"id":local,"product":public(p),"quantity":quantity,"size":size,"amount":amount,"currency":"INR","status":"created","provider":"demo","created_at":now(),"session_id":session_id,"actor":actor,"upsell_source":upsell_source,"suggested_after":suggested_after}
+    key,secret=os.getenv("RAZORPAY_KEY_ID","").strip(),os.getenv("RAZORPAY_KEY_SECRET","").strip()
+    if key and secret and "your_" not in key and "your_" not in secret and os.getenv("CARTWISE_DEMO_MODE","").lower() not in {"1","true","yes"}:
         try:
             import razorpay
-            remote = razorpay.Client(auth=(key_id, secret)).order.create({"amount":amount*100,"currency":"INR","receipt":local_id})
-            order.update({"id":remote["id"],"provider":"razorpay"})
+            remote=razorpay.Client(auth=(key,secret)).order.create({"amount":amount*100,"currency":"INR","receipt":local}); order.update(id=remote["id"],provider="razorpay")
+            log("razorpay_order_created",inp,{"order_id":remote["id"],"status":remote.get("status","created")},"Razorpay accepted the validated, server-priced order and returned its real test-mode ID.")
         except Exception as exc:
-            error_type = type(exc).__name__
-            error_message = str(exc).strip() or "no error message provided"
-            audit("create_order", {"product_id":product_id,"quantity":quantity,"amount":amount}, {"ok":False,"reason":"razorpay_order_failed","error_type":error_type,"error_message":error_message})
-            raise HTTPException(502, f"Razorpay order creation failed ({error_type}): {error_message}") from exc
-    orders[order["id"]] = order
-    audit("create_order", {"product_id":product_id,"quantity":quantity,"amount":amount}, {"ok":True,"order_id":order["id"],"provider":order["provider"]})
-    return {"ok":True,"order":order,"razorpay_key":key_id if order["provider"] == "razorpay" else None}
+            log("create_order",inp,{"ok":False,"reason":"razorpay_order_failed","error":str(exc)},"The payment provider rejected creation of the server-priced order."); raise HTTPException(502,f"Razorpay order creation failed: {exc}") from exc
+    orders[order["id"]]=order; save_orders()
+    log("create_order",{**inp,"upsell_source":upsell_source,"suggested_after":suggested_after},{"ok":True,"order_id":order["id"],"provider":order["provider"]},reason)
+    suggestion=upsell_for(product_id)
+    return {"ok":True,"order":order,"razorpay_key":key if order["provider"]=="razorpay" else None,"upsell_suggestion":public(suggestion) if suggestion else None}
 
-def response(message: str, session_id: str) -> dict:
-    text, lower, state = message.strip(), message.strip().lower(), sessions.setdefault(session_id, {})
-    qty = quantity_in(text)
-    if qty > MAX_QUANTITY:
-        audit("guardrail_blocked", {"message":text,"quantity":qty}, {"reason":"max_quantity","limit":MAX_QUANTITY})
-        return {"reply":f"I can place up to {MAX_QUANTITY} units per order to protect inventory and payment limits. Would you like {MAX_QUANTITY} or fewer?", "products":[],"order":None}
-    if any(w in lower for w in ("hi", "hello", "hey")) and len(lower.split()) <= 3:
-        categories = natural_list(sorted({p["category"] for p in CATALOG}))
-        return {"reply":f"Welcome to Cartwise! I can help you find {categories}. What are you shopping for today?", "products":[],"order":None}
-    payment_words = ("payment link", "pay now", "checkout", "complete payment", "pay for it")
-    confirms = lower in {"yes","yes please","confirm","confirmed","go ahead","buy it","buy"} or any(p in lower for p in payment_words)
+def create_bundle_order(base_order_id,addon_id,reasoning):
+    if base_order_id not in orders:raise HTTPException(404,"Base order not found")
+    base=orders[base_order_id]; addon=product(addon_id)
+    if base["status"]!="created":return {"ok":False,"reason":"base_order_not_pending"}
+    if not addon or addon["stock"]<1:return {"ok":False,"reason":"upsell_out_of_stock"}
+    amount=base["amount"]+addon["price"]
+    if amount>limits()["max_order_value"]:
+        inp={"base_order_id":base_order_id,"addon_id":addon_id,"amount":amount,"actor":base.get("actor","human_chat")}; out={"ok":False,"reason":"max_order_value","limit":limits()["max_order_value"]}; reject_attempt("guardrail_max_value",inp); log("guardrail_blocked",inp,out,"The combined base and add-on total exceeds the merchant approval limit."); return out
+    local=f"local_{uuid.uuid4().hex[:12]}"; key,secret=os.getenv("RAZORPAY_KEY_ID","").strip(),os.getenv("RAZORPAY_KEY_SECRET","").strip()
+    bundled={**base,"id":local,"amount":amount,"status":"created","created_at":now(),"upsell_source":True,"upsell_accepted":True,"suggested_after":base["product"]["id"],"upsell_source_product":base["product"]["id"],"upsell_added_product":addon_id,"upsell_added_amount":addon["price"],"items":[{"product":base["product"],"quantity":base["quantity"],"size":base.get("size")},{"product":public(addon),"quantity":1,"size":None}],"replaces_order_id":base_order_id}
+    if key and secret and "your_" not in key and "your_" not in secret and os.getenv("CARTWISE_DEMO_MODE","").lower() not in {"1","true","yes"}:
+        try:
+            import razorpay
+            remote=razorpay.Client(auth=(key,secret)).order.create({"amount":amount*100,"currency":"INR","receipt":local}); bundled.update(id=remote["id"],provider="razorpay")
+            log("razorpay_order_created",{"base_order_id":base_order_id,"addon_id":addon_id,"amount":amount},{"order_id":remote["id"]},"Razorpay created a replacement order containing the accepted add-on in its combined total.")
+        except Exception as exc:raise HTTPException(502,f"Razorpay bundle order creation failed: {exc}") from exc
+    base["status"]="superseded"; base["superseded_by"]=bundled["id"]; orders[bundled["id"]]=bundled; save_orders()
+    log("accept_upsell",{"base_order":base_order_id,"base_product":base["product"]["id"],"added_product":addon_id},{"order_id":bundled["id"],"combined_amount":amount},reasoning)
+    return {"ok":True,"order":bundled,"razorpay_key":key if bundled["provider"]=="razorpay" else None}
+
+def chat_reply(message,session_id):
+    text=message.strip(); low=text.lower(); state=sessions.setdefault(session_id,{}); quantity=qty(text); base={"products":[],"order":None}; guard=limits()
+    if quantity>guard["max_quantity"]:
+        log("guardrail_blocked",{"message":text,"quantity":quantity},{"reason":"max_quantity","limit":guard["max_quantity"]},"The customer's quantity exceeds the merchant's current limit."); return {**base,"reply":f"The merchant allows at most {guard['max_quantity']} units per item. Would you like fewer?"}
+    if any(w in low for w in ("hi","hello","hey")) and len(low.split())<=3:return {**base,"reply":"Welcome to Cartwise! What are you shopping for?"}
+    offered=state.get("upsell")
+    accepts_upsell=bool(offered and any(word in low for word in ("add","include","take")) and any(word in low for word in ("sock","bottle",offered["product_id"].lower())))
+    if accepts_upsell:
+        addon=product(offered["product_id"]); result=create_bundle_order(offered["base_order_id"],addon["id"],f"Customer explicitly accepted the suggested {addon['name']} before paying."); state.pop("upsell",None)
+        if not result["ok"]:return {**base,"reply":f"I couldn't add that item: {result['reason'].replace('_',' ')}. Your original checkout is still available."}
+        order=result["order"]
+        return {**base,"reply":f"Added {addon['name']} for {money(addon['price'])}. Your updated total is {money(order['amount'])}; use the new checkout below.","summary":{"product":order["product"],"quantity":order["quantity"],"amount":order["amount"]},"order":order,"razorpay_key":result["razorpay_key"]}
+    confirms=low in {"yes","yes please","confirm","confirmed","go ahead","buy it","buy"} or any(x in low for x in ("payment link","pay now","checkout","complete payment","pay for it"))
     if confirms and state.get("pending"):
-        pending = state.pop("pending")
-        result = create_checkout_order(pending["product_id"], pending["quantity"], session_id)
-        if result["ok"]:
-            order = result["order"]; addon = next((p for p in CATALOG if p["category"] == "accessories" and p["stock"] > 0), None)
-            extra = f" After payment, you may also like {addon['name']} for {money(addon['price'])}." if addon else ""
-            checkout_message = "Razorpay is temporarily unavailable, so demo checkout is shown below." if order.get("fallback_reason") else "Open secure checkout below."
-            return {"reply":f"Your order for {order['quantity']} × {order['product']['name']} ({money(order['amount'])}) is ready. {checkout_message}{extra}","products":[],"summary":{"product":order["product"],"quantity":order["quantity"],"amount":order["amount"]},"order":order,"razorpay_key":result["razorpay_key"]}
-        if result["reason"] == "out_of_stock":
-            alternatives = [public(p) for p in CATALOG if p["category"] == result["product"]["category"] and p["stock"] > 0]
-            return {"reply":f"{result['product']['name']} is out of stock. Here are available alternatives.","products":alternatives,"order":None}
-        if result["reason"] == "duplicate_order": return {"reply":f"A matching order ({result['order']['id']}) already exists, so I did not charge you twice.","products":[],"order":None}
-    if any(p in lower for p in payment_words):
-        choices = state.get("choices", [])
-        if choices:
-            names = [product_by_id(product_id)["name"] for product_id in choices if product_by_id(product_id)]
-            return {"reply":f"I found more than one option. Please choose {natural_list(names)} by tapping a card or typing its full name, then I can prepare checkout.","products":[],"order":None}
-        return {"reply":"Please choose a product first by tapping its card or typing its name. I’ll then prepare secure checkout after you confirm.","products":[],"order":None}
-    intent = request_intent(text)
-    if intent == "compare":
-        products_to_compare = compared_products(text)
-        if len(products_to_compare) >= 2:
-            audit("compare_catalog", {"query": text}, {"product_ids": [p["id"] for p in products_to_compare]})
-            return {"reply":comparison_facts(products_to_compare),"products":[public(p) for p in products_to_compare],"order":None,"search_status":"comparison"}
-    product = match_product(text)
-    if product and intent in {"price", "sizes", "availability"}:
-        audit("catalog_question", {"query": text, "intent": intent}, {"product_ids": [product["id"]]})
-        return {"reply":product_facts(product, intent),"products":[public(product)],"order":None,"search_status":intent}
-    if product:
-        audit("search_catalog", {"query": text, "max_price": None}, {"status": "exact_match", "matches": 1, "product_ids": [product["id"]]})
-        state["pending"] = {"product_id":product["id"],"quantity":qty}
-        audit("select_product", {"product_id":product["id"],"quantity":qty}, {"amount":product["price"]*qty,"stock":product["stock"]})
-        return {"reply":f"I found {product['name']}: {money(product['price'])} each. {qty} × totals {money(product['price']*qty)}. Say “yes” or “give me the payment link” to confirm.","products":[public(product)],"order":None}
-    limit = price_limit_in(text)
-    search = search_catalog(text, limit)
-    if intent == "cheapest" and search["matches"]:
-        in_stock = [p for p in search["matches"] if p["stock"] > 0]
-        candidates = in_stock or search["matches"]
-        lowest_price = min(p["price"] for p in candidates)
-        cheapest = [p for p in candidates if p["price"] == lowest_price]
-        names = natural_list([p["name"] for p in cheapest])
-        status = "in stock" if in_stock else "currently out of stock"
-        return {"reply":f"The cheapest matching {'products are' if len(cheapest) > 1 else 'product is'} {names} at {money(lowest_price)} each. {'They are' if len(cheapest) > 1 else 'It is'} {status}.","products":cheapest,"order":None,"search_status":"cheapest"}
-    if intent == "compare" and len(search["matches"]) >= 2:
-        return {"reply":comparison_facts(search["matches"]),"products":search["matches"],"order":None,"search_status":"comparison"}
-    if intent in {"price", "sizes", "availability"} and search["matches"]:
-        if intent == "price":
-            reply = "I found matching products. Their prices are shown on the product cards below."
-        elif intent == "sizes":
-            facts = "; ".join(f"{p['name']}: sizes {natural_list([str(size) for size in p['sizes']])}" for p in search["matches"])
-            reply = f"Available sizes: {facts}."
-        else:
-            facts = "; ".join(f"{p['name']}: {'in stock (' + str(p['stock']) + ')' if p['stock'] else 'out of stock'}" for p in search["matches"])
-            reply = f"Availability: {facts}."
-        audit("catalog_question", {"query": text, "intent": intent}, {"product_ids": [p["id"] for p in search["matches"]]})
-        return {"reply":reply,"products":search["matches"],"order":None,"search_status":intent}
-    if search["status"] == "ambiguous":
-        state["choices"] = [p["id"] for p in search["matches"]]
-        choices = "; ".join(f"{p['name']} ({p['color']}, {money(p['price'])}, {'in stock' if p['stock'] else 'out of stock'})" for p in search["matches"])
-        return {"reply":f"I found multiple matching products: {choices}. Tap a product card or choose one by its full name or colour.","products":search["matches"],"order":None,"search_status":"ambiguous"}
-    if search["status"] == "exact_match":
-        product = search["matches"][0]
-        state["pending"] = {"product_id":product["id"],"quantity":qty}
-        audit("select_product", {"product_id":product["id"],"quantity":qty}, {"amount":product["price"]*qty,"stock":product["stock"]})
-        return {"reply":f"I found exactly one match: {product['name']} ({product['color']}, {money(product['price'])}, {'in stock' if product['stock'] else 'out of stock'}). Say yes to confirm before checkout.","products":[product],"order":None,"search_status":"exact_match"}
-    categories = search["available_categories"]
-    available = [public(p) for p in CATALOG if p["stock"] > 0]
-    available_list = "\n".join(f"• {p['name']} — {p['color']} — {money(p['price'])}" for p in available)
-    audit("catalog_unavailable_request", {"query":text}, {"available_categories":categories, "available_product_ids":[p["id"] for p in CATALOG if p["stock"] > 0]})
-    return {"reply":f"I don’t currently stock that item. I currently carry {natural_list(categories)}.\n\nHere are the available options:\n{available_list}\n\nTap a product below to see its details, or tell me your budget.","products":available,"order":None,"search_status":"no_match"}
-    known = {"shoe","shoes","running","trail","sock","socks","bottle","accessories","something","anything"}
-    if False:
-        results = search_catalog(text, limit)
-        if results: return {"reply":f"I found {len(results)} option{'s' if len(results)!=1 else ''}{' within '+money(limit) if limit else ''}. Pick one by name or colour and I’ll prepare the order.","products":results[:4],"order":None}
-    categories = sorted({p["category"] for p in CATALOG})
-    available = [public(p) for p in CATALOG if p["stock"] > 0]
-    available_list = "\n".join(f"• {p['name']} — {p['color']} — {money(p['price'])}" for p in available)
-    audit("catalog_unavailable_request", {"query":text}, {"available_categories":categories, "available_product_ids":[p["id"] for p in CATALOG if p["stock"] > 0]})
-    return {"reply":f"I don’t currently stock that item. I currently carry {natural_list(categories)}.\n\nHere are the available options:\n{available_list}\n\nTap a product below to see its details, or tell me your budget.","products":available,"order":None}
+        pending=state.pop("pending"); result=create_checkout_order(**pending,session_id=session_id,actor="human_chat",reasoning=f"Customer explicitly confirmed {pending['product_id']} after reviewing its price.")
+        if not result["ok"]:return {**base,"reply":f"I couldn't create that order: {result['reason'].replace('_',' ')}. The merchant guardrail was enforced server-side."}
+        order=result["order"]; addon=result.get("upsell_suggestion"); extra=""
+        if addon:
+            state["upsell"]={"product_id":addon["id"],"suggested_after":order["product"]["id"],"base_order_id":order["id"]}; extra=f"\n\nBy the way, {addon['name']} ({money(addon['price'])}) pairs well with {order['product']['name']}. It's optional—say “add {addon['name']}” before paying, or proceed straight to checkout."
+            log("suggest_upsell",{"base_product":order["product"]["id"],"suggested_product":addon["id"]},{"shown_to_customer":True},f"{order['product']['name']} explicitly lists {addon['name']} as a complementary product, and it is currently in stock.")
+        return {**base,"reply":f"Your order for {order['quantity']} × {order['product']['name']} ({money(order['amount'])}) is ready.{extra}","summary":{"product":order["product"],"quantity":order["quantity"],"amount":order["amount"]},"order":order,"razorpay_key":result["razorpay_key"],"upsell_suggestion":addon}
+    p=named_product(text)
+    if p:
+        if p["stock"]<1:
+            alternatives=[public(item) for item in CATALOG if item["stock"]>0 and item["category"]==p["category"]]
+            log("guardrail_blocked",{"product_id":p["id"],"stage":"selection"},{"reason":"out_of_stock","alternative_ids":[item["id"] for item in alternatives]},f"{p['name']} has no available inventory, so checkout was blocked before confirmation.")
+            return {**base,"reply":f"{p['name']} is currently out of stock, so I can't prepare checkout for it. Here are available alternatives.","products":alternatives}
+        up=state.get("upsell"); is_up=bool(up and up["product_id"]==p["id"]); state["pending"]={"product_id":p["id"],"quantity":quantity,"upsell_source":is_up,"suggested_after":up["suggested_after"] if is_up else None}
+        log("select_product",{"product_id":p["id"],"quantity":quantity},{"amount":p["price"]*quantity,"stock":p["stock"]},f"The customer named {p['name']}; it was selected for confirmation before checkout.")
+        return {**base,"reply":f"{p['name']} costs {money(p['price'])}. {quantity} × totals {money(p['price']*quantity)}. Say yes to confirm.","products":[public(p)]}
+    status,found=search_catalog(text,budget(text))
+    if status=="no_match":return {**base,"reply":"I couldn't find that in the merchant catalog. Here are available products.","products":[public(p) for p in CATALOG if p["stock"]>0]}
+    if "cheapest" in low:
+        choices=sorted([p for p in found if p["stock"]>0] or found,key=lambda p:p["price"]); return {**base,"reply":f"The cheapest matching product is {choices[0]['name']} at {money(choices[0]['price'])}.","products":[choices[0]]}
+    return {**base,"reply":"I found these catalog-backed options. Choose one by name.","products":found}
 
 @app.get("/")
-def home(): return FileResponse(ROOT / "static" / "index.html")
+def home():return FileResponse(ROOT/"static"/"index.html")
+@app.get("/merchant")
+def merchant_page():return FileResponse(ROOT/"static"/"merchant.html")
 @app.get("/api/catalog")
-def catalog(): return {"products":[public(p) for p in CATALOG]}
-@app.get("/api/audit")
-def get_audit():
-    if not AUDIT_FILE.exists(): return {"entries":[]}
-    return {"entries":[json.loads(x) for x in AUDIT_FILE.read_text(encoding="utf-8").splitlines() if x][-100:][::-1]}
+def catalog():return {"merchant":"Talk to Buy Store","products":[public(p) for p in CATALOG]}
+@app.post("/api/agent/decide")
+def decide_for_agent(request:AgentDecisionRequest):
+    decision=autonomous_decision(request.goal)
+    log("agent_decide",{"goal":request.goal,"actor":"autonomous_agent"},decision,"Gemini evaluated the live server catalog and selected one product for the autonomous buyer.",category="business")
+    return decision
+@app.post("/api/order")
 @app.post("/api/orders")
-def create_order(request: CreateOrderRequest): return create_checkout_order(request.product_id, request.quantity)
-@app.post("/api/orders/{order_id}/payment")
-def update_payment(order_id: str, update: PaymentUpdate):
-    if order_id not in orders: raise HTTPException(404,"Order not found")
-    if update.status not in {"paid","failed"}: raise HTTPException(400,"Invalid payment status")
-    order = orders[order_id]
-    if update.status == "paid" and order["provider"] == "razorpay":
-        if not update.payment_id or not update.signature: raise HTTPException(400,"A Razorpay payment signature is required.")
+def create_order(request:CreateOrderRequest):
+    result=create_checkout_order(**request.model_dump())
+    return result if result.get("ok") else JSONResponse(status_code=422,content=result)
+@app.get("/api/order/{order_id}/status")
+def order_status(order_id:str):
+    if order_id not in orders:raise HTTPException(404,"Order not found")
+    order=orders[order_id]
+    if order["provider"]=="razorpay":
         try:
             import razorpay
-            key_id, secret = razorpay_credentials()
-            if not key_id or not secret:
-                raise HTTPException(500,"Razorpay credentials are not loaded on the server.")
-            razorpay.Client(auth=(key_id,secret)).utility.verify_payment_signature({"razorpay_order_id":order_id,"razorpay_payment_id":update.payment_id,"razorpay_signature":update.signature})
+            remote=razorpay.Client(auth=(os.getenv("RAZORPAY_KEY_ID"),os.getenv("RAZORPAY_KEY_SECRET"))).order.fetch(order_id)
+            if remote.get("status")=="paid":order["status"]="completed"; save_orders()
+        except Exception:pass
+    log("check_payment_status",{"order_id":order_id,"actor":order.get("actor","human_chat")},{"status":order["status"]},"The buyer requested the authoritative payment state for this order."); return order
+@app.post("/api/orders/{order_id}/payment")
+def update_payment(order_id:str,update:PaymentUpdate):
+    if order_id not in orders:raise HTTPException(404,"Order not found")
+    if update.status not in {"paid","failed"}:raise HTTPException(400,"Invalid payment status")
+    order=orders[order_id]
+    if update.status=="paid" and order["provider"]=="razorpay":
+        if not update.payment_id or not update.signature:raise HTTPException(400,"A Razorpay payment signature is required")
+        try:
+            import razorpay
+            razorpay.Client(auth=(os.getenv("RAZORPAY_KEY_ID"),os.getenv("RAZORPAY_KEY_SECRET"))).utility.verify_payment_signature({"razorpay_order_id":order_id,"razorpay_payment_id":update.payment_id,"razorpay_signature":update.signature})
         except Exception as exc:
-            audit("check_payment_status", {"order_id":order_id,"payment_id":update.payment_id}, {"status":"signature_verification_failed"})
-            raise HTTPException(400,"Payment verification failed.") from exc
-    order["status"] = update.status
-    audit("check_payment_status", {"order_id":order_id,"amount":order["amount"]}, {"status":update.status,"provider":order["provider"]})
-    return order
+            log("check_payment_status",{"order_id":order_id},{"status":"signature_verification_failed"},"The provider signature could not be verified."); raise HTTPException(400,"Payment verification failed") from exc
+    final_status="completed" if update.status=="paid" else "failed"
+    order["status"]=final_status; order["completed_at"]=now() if final_status=="completed" else None
+    if final_status=="failed":order["failure_reason"]="payment_declined"
+    else:order.pop("failure_reason",None)
+    save_orders(); log("check_payment_status",{"order_id":order_id,"amount":order["amount"],"actor":order.get("actor","human_chat")},{"status":final_status,"failure_reason":order.get("failure_reason")},"Checkout reported a payment result; the server verified it and persisted the final status used by merchant analytics."); return order
+@app.post("/api/audit/event")
+def browser_event(event:BrowserEvent):
+    allowed={"checkout_rendered","razorpay_sdk_loaded","payment_attempted","checkout_dismissed","checkout_error"}
+    if event.event not in allowed:raise HTTPException(400,"Unsupported lifecycle event")
+    result={"recorded":True,"detail":event.detail}
+    log(event.event,{"order_id":event.order_id},result,f"The storefront reported the {event.event.replace('_',' ')} step for this checkout lifecycle.")
+    return result
+@app.get("/api/audit")
+def get_audit():
+    entries=[json.loads(x) for x in AUDIT.read_text(encoding="utf-8").splitlines() if x] if AUDIT.exists() else []
+    for entry in entries:
+        if not entry.get("reasoning"):
+            subject=(entry.get("inputs") or {}).get("product_id") or (entry.get("inputs") or {}).get("query") or "the recorded request"
+            entry["reasoning"]=f"This legacy {entry.get('action','commerce')} action was recorded to safely process {subject}."
+        entry.setdefault("tool",entry.get("action","commerce_action")); entry.setdefault("input",entry.get("inputs",{}))
+        entry.setdefault("category",audit_category(entry["tool"],entry.get("result",{})))
+    return {"entries":entries[-100:][::-1]}
+@app.get("/api/merchant/summary")
+def summary():
+    values=[o for o in orders.values() if o.get("status")!="superseded"]; paid=[o for o in values if o["status"] in {"paid","completed"}]; revenue=sum(o["amount"] for o in paid); upsells=sum(o.get("upsell_added_amount",0) for o in paid if o.get("upsell_accepted"))
+    if AUDIT.exists():
+        audit_entries=[json.loads(x) for x in AUDIT.read_text(encoding="utf-8").splitlines() if x]
+        completed_ids={(e.get("inputs") or {}).get("order_id") for e in audit_entries if (e.get("tool") or e.get("action"))=="check_payment_status" and (e.get("result") or {}).get("status") in {"paid","completed"}}
+        for e in audit_entries:
+            if (e.get("tool") or e.get("action"))!="accept_upsell":continue
+            result=e.get("result") or {}; bundle_id=result.get("order_id")
+            if bundle_id not in completed_ids or bundle_id in orders:continue
+            inputs=e.get("inputs") or e.get("input") or {}; addon=product(inputs.get("added_product"))
+            if addon:upsells+=addon["price"]
+    failures=[o for o in values if o.get("status") not in {"paid","completed"}]+list(attempts.values()); breakdown={}
+    for item in failures:
+        reason=item.get("failure_reason") or "unknown"; breakdown[reason]=breakdown.get(reason,0)+1
+    attempted=len(paid)+len(failures); guardrail_blocks=sum(count for reason,count in breakdown.items() if reason.startswith("guardrail_"))
+    running=0; series=[]
+    for order in sorted(paid,key=lambda o:o.get("completed_at") or o["created_at"]):
+        running+=order["amount"]; series.append({"label":(order.get("completed_at") or order["created_at"])[5:16].replace("T"," "),"revenue":running})
+    return {"revenue":revenue,"upsell_revenue":upsells,"upsell_percent":round(upsells/revenue*100,1) if revenue else 0,"completed":len(paid),"attempted":attempted,"conversion_rate":round(len(paid)/attempted*100,1) if attempted else 0,"failure_breakdown":breakdown,"guardrail_blocks":guardrail_blocks,"revenue_series":series[-12:]}
+@app.get("/api/merchant/config")
+def get_config():return limits()
+@app.put("/api/merchant/config")
+def put_config(value:MerchantConfig):
+    data=value.model_dump(); CONFIG.write_text(json.dumps(data,indent=2),encoding="utf-8"); log("update_guardrails",data,{"saved":True},"The merchant changed the boundaries used by every checkout channel."); return data
+@app.post("/api/merchant/campaign")
+def campaign_check():
+    sold={}
+    for o in orders.values():
+        if o["status"] in {"paid","completed"}:sold[o["product"]["id"]]=sold.get(o["product"]["id"],0)+o["quantity"]
+    if sold:
+        pid,units=max(sold.items(),key=lambda x:x[1]); p=product(pid); suggestion=f"{p['name']} is the top seller with {units} paid unit(s). Bundle it with Pace Crew Socks to grow basket value."; signal={"type":"top_seller","product_id":pid,"paid_units":units}
+    else:
+        p=min((x for x in CATALOG if x["stock"]>0),key=lambda x:x["stock"]); suggestion=f"{p['name']} has the lowest available stock ({p['stock']} units). Feature it as limited availability rather than discounting it."; signal={"type":"low_stock","product_id":p["id"],"stock":p["stock"]}
+    generator="data-grounded fallback"
+    if os.getenv("GEMINI_API_KEY","").strip():
+        try:
+            prompt=f"You are a merchant growth analyst. Write one concise, specific action (maximum 35 words) based only on this signal: {json.dumps(signal)}. Product catalog: {json.dumps([public(p) for p in CATALOG])}. Do not invent discounts or facts."
+            generated=call_gemini(prompt)
+            if generated:suggestion=generated; generator="Gemini"
+        except Exception:pass
+    out={"generated_at":now(),"signal":signal,"suggestion":suggestion,"generator":generator}; CAMPAIGN.write_text(json.dumps(out,indent=2),encoding="utf-8"); log("run_campaign_check",signal,{"suggestion":suggestion,"generator":generator},"Paid-order and stock data identified one actionable growth signal for a grounded campaign recommendation."); return out
+@app.get("/api/merchant/campaign")
+def get_campaign():return read(CAMPAIGN,None)
 @app.post("/api/chat")
-def chat(request: ChatRequest): return response(request.message, request.session_id or "anonymous")
-
+def chat(request:ChatRequest):return chat_reply(request.message,request.session_id or "anonymous")

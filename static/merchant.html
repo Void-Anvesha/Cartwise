@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cartwise Merchant</title><link rel="stylesheet" href="/static/merchant.css"><link rel="stylesheet" href="/static/merchant-metrics.css"></head>
+<body><main>
+<nav><a href="/">← Storefront</a><div class="nav-actions"><strong>Cartwise Merchant</strong><button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark mode" title="Toggle dark mode">☾</button></div></nav>
+<header><p>MERCHANT COMMAND CENTER</p><h1>Revenue, controls, and growth.</h1></header>
+<section class="metrics">
+<article><span>Total revenue</span><b id="revenue">₹0</b><small id="upsell">₹0 from accepted, completed add-ons</small></article>
+<article><span>Completed orders</span><b id="orders">0 / 0</b><small id="conversion">0% conversion</small><button id="breakdown-toggle" class="detail-toggle" type="button" aria-expanded="false" aria-controls="breakdown">Why?</button><div id="breakdown" class="completion-breakdown" hidden></div></article>
+<article><span>Upsell share</span><b id="share">0%</b><small>of completed revenue—not suggestions shown</small></article>
+<article><span>Guardrail blocks</span><b id="guardrail-blocks">0</b><small id="guardrail-label">0 order(s) auto-rejected</small></article>
+</section>
+<section class="panel"><h2>Revenue over time</h2><div id="chart" class="chart"><p>No completed orders yet — complete a storefront purchase to see the trend.</p></div></section>
+<section class="grid"><article class="panel"><h2>Agent guardrails</h2><p>Limits apply to chat and direct agent API orders.</p><form id="config"><label>Max order value (₹)<input id="max-value" type="number" min="1" required></label><label>Max quantity per item<input id="max-quantity" type="number" min="1" required></label><button>Save guardrails</button><output id="saved"></output></form></article><article class="panel"><h2>Campaign orchestrator</h2><p>Analyze completed orders and inventory for one grounded action.</p><button id="campaign">Run campaign check</button><div id="suggestion" class="suggestion">No campaign check run yet.</div></article></section>
+<section class="panel"><h2>Explainable audit trail</h2><p>Business decisions are shown by default; technical lifecycle events remain available for debugging.</p><div class="audit-controls"><div class="filters"><button data-filter="all" class="active">All</button><button data-filter="orders">Orders</button><button data-filter="rejections">Rejections</button><button data-filter="upsells">Upsells</button></div><label class="technical-toggle"><input id="show-technical" type="checkbox"> Show technical/debug events</label></div><div id="audit" class="audit"></div></section>
+</main><script src="/static/merchant.js"></script></body></html>

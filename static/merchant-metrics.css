@@ -1,0 +1,9 @@
+.metrics{grid-template-columns:repeat(4,1fr)}
+.metrics .detail-toggle{margin-top:10px;border:0;background:none;color:#3158c8;padding:0;font-weight:700;cursor:pointer}
+.completion-breakdown{margin-top:12px;padding-top:10px;border-top:1px solid #e0e6f1}
+.breakdown-row{display:flex;justify-content:space-between;gap:12px;padding:4px 0;font-size:.78rem}
+.breakdown-row b{font-size:.78rem;margin:0}
+[data-theme=dark] .completion-breakdown{border-color:#2e3d58}
+[data-theme=dark] .metrics .detail-toggle{color:#8da8ff}
+@media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:700px){.metrics{grid-template-columns:1fr}}

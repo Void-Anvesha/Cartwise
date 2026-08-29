@@ -24,7 +24,7 @@
   <main>
     <header class="topbar">
       <a class="brand" href="/" aria-label="Cartwise home"><span class="brand-mark">C</span><span>Cartwise</span></a>
-      <button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme">☾</button>
+      <div><a class="text-button" href="/merchant" title="Open the Merchant Command Center for revenue, controls, and audit logs" aria-label="Merchant Command Center" style="text-decoration:none;margin-right:8px">Merchant dashboard</a><button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme">☾</button></div>
     </header>
     <section class="hero">
       <p class="eyebrow">SHOPPING, SIMPLIFIED</p>
@@ -37,15 +37,18 @@
         <button id="clear-chat" class="text-button" type="button">New chat</button>
       </header>
       <div id="messages" class="messages"><div class="bot">Hi! How can I help you find the right product today?</div></div>
-      <div class="quick-prompts">
-        <button type="button" data-prompt="show me running shoes under 3000">Running shoes</button>
-        <button type="button" data-prompt="show me trail shoes">Trail shoes</button>
-        <button type="button" data-prompt="anything under 1000">Under ₹1,000</button>
-      </div>
+      <div class="quick-prompts" id="quick-prompts" aria-label="Catalog suggestions"></div>
       <form id="chat-form"><input id="message" placeholder="Ask about a product…" autocomplete="off" aria-label="Message the assistant"><button type="submit" aria-label="Send message">Send →</button></form>
       <div id="payment" class="payment"></div>
     </section>
+    <section class="agent-shell" aria-labelledby="agent-title">
+      <header class="agent-head"><div><p class="agent-kicker">AUTONOMOUS MODE</p><h2 id="agent-title">Autonomous Buyer Agent</h2><p>Give it one goal. It independently chooses a product and creates the order through the same merchant guardrails.</p></div><span class="agent-badge">AI → API</span></header>
+      <form id="agent-form" class="agent-form"><label for="agent-goal">Shopping goal</label><div><input id="agent-goal" required maxlength="1000" placeholder='e.g. “Buy the cheapest in-stock running shoes under ₹3,000”'><button id="agent-run" type="submit">Run agent</button></div></form>
+      <div id="agent-progress" class="agent-progress" role="status" aria-live="polite" hidden><div class="agent-progress-bar"></div><span>Agent working…</span></div>
+      <div id="agent-steps" class="agent-steps" aria-live="polite"></div>
+      <div id="agent-result" class="agent-result" hidden></div>
+    </section>
   </main>
-  <script src="/static/app.js?v=7"></script>
+  <script src="/static/app.js?v=8"></script>
 </body>
 </html>

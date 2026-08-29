@@ -15,6 +15,18 @@ uvicorn app.main:app --reload
 
 Open http://127.0.0.1:8000.
 
+Merchant analytics, guardrails, campaign recommendations, and the explainable audit trail are at http://127.0.0.1:8000/merchant.
+
+## Autonomous buyer
+
+With the server running, launch a UI-independent buyer (Node 20+):
+
+```powershell
+node --env-file=.env buyer-agent.js "Buy the cheapest in-stock running shoes, size 9"
+```
+
+It reads `GET /api/catalog`, requires a structured Gemini decision, and creates the server-priced order through `POST /api/order`. Check it with `GET /api/order/{id}/status`. The script exits immediately when `GEMINI_API_KEY` is unavailable; it never silently substitutes deterministic purchasing logic.
+
 Without Razorpay credentials, the app uses a safe demo checkout, including a reproducible failed-payment button. With `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`, it creates Razorpay test-mode orders, opens the official Checkout widget, and verifies its payment signature on the server.
 
 ## Demo sequence
@@ -29,7 +41,7 @@ Without Razorpay credentials, the app uses a safe demo checkout, including a rep
 
 ## Safety and auditability
 
-- The catalog, stock, quantity limit (5), and ₹10,000 order cap are enforced on the server.
+- Catalog, stock, size, quantity, and order-value rules are enforced on the server and configured from the merchant dashboard.
 - Products are selected and confirmed before checkout; the browser only receives the public Razorpay Key ID.
 - Duplicate matching orders in the same session are blocked for five minutes.
 - `GET /api/catalog` is an AI-readable merchant catalog.
