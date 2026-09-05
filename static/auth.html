@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cartwise account</title><link rel="stylesheet" href="/static/shared.css?v=1"><link rel="stylesheet" href="/static/auth.css?v=4"></head>
+<body>
+  <main class="auth-page">
+    <header class="auth-page-header"><a href="/login" class="brand"><span>C</span> Cartwise</a></header>
+    <div class="auth-page-content">
+      <section class="auth-hero"><p>SHOPPING, SIMPLIFIED</p><h1>One account.<br><em>Smarter checkout.</em></h1><small>Sign in to use conversational shopping, the AI buyer, and merchant insights.</small></section>
+      <section class="auth-card">
+        <div class="auth-tabs"><a id="login-tab" href="/login">Log in</a><a id="signup-tab" href="/signup">Sign up</a></div>
+        <div class="auth-copy"><p id="auth-eyebrow"></p><h2 id="auth-title"></h2><span id="auth-subtitle"></span></div>
+        <div id="auth-error" class="auth-error" role="alert" hidden></div>
+        <form id="auth-form"><label>Email address<input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com" required></label><label>Password<input id="auth-password" type="password" minlength="6" autocomplete="current-password" placeholder="Minimum 6 characters" required></label><button id="auth-submit" type="submit"></button></form>
+        <p id="auth-switch" class="auth-switch"></p>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="/static/auth.js?v=2"></script>
+</body></html>

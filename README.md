@@ -17,6 +17,8 @@ Open http://127.0.0.1:8000.
 
 Merchant analytics, guardrails, campaign recommendations, and the explainable audit trail are at http://127.0.0.1:8000/merchant.
 
+Cartwise uses one shared dashboard design system across the authenticated storefront and merchant tools: persistent navy navigation, shared cards and indigo actions, and responsive mobile drawers. The revenue hero retains a warm analytics accent. Login and signup reuse the same tokens without authenticated navigation.
+
 ## Autonomous buyer
 
 With the server running, launch a UI-independent buyer (Node 20+):

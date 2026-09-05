@@ -23,6 +23,13 @@ orders:dict[str,dict[str,Any]]=read(ORDERS,{}); attempts:dict[str,dict[str,Any]]
 app=FastAPI(title="Cartwise",description="Conversational and agent-to-agent commerce API")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 
+@app.middleware("http")
+async def prevent_stale_frontend(request, call_next):
+    response=await call_next(request)
+    if request.url.path.startswith("/static/") or request.url.path in {"/","/merchant","/login","/signup"}:
+        response.headers["Cache-Control"]="no-store"
+    return response
+
 class ChatRequest(BaseModel):
     message:str=Field(min_length=1,max_length=1000); session_id:str|None=None
 class CreateOrderRequest(BaseModel):
@@ -38,6 +45,8 @@ class BrowserEvent(BaseModel):
     event:str
     order_id:str|None=None
     detail:str|None=Field(default=None,max_length=500)
+class ResetMerchantDataRequest(BaseModel):
+    confirmation:str
 class AgentDecisionRequest(BaseModel):
     goal:str=Field(min_length=3,max_length=1000)
     products:list[dict[str,Any]]|None=None
@@ -101,9 +110,9 @@ Catalog: {json.dumps(available,ensure_ascii=False)}'''
 
 def search_catalog(query,max_price=None):
     synonyms={"shoe":"shoes","sneaker":"shoes","sneakers":"shoes","hydration":"bottle","sock":"socks"}
-    ignored=set("show me i want need any something for a an the please under below than price cost much less of with pair pairs which what how do you is are in there available availability stock sizes size compare comparison difference between and cheapest".split())
+    ignored=set("show me i want need any anything something for a an the please under below than price cost much less of with pair pairs which what how do you is are in there available availability stock sizes size compare comparison difference between and cheapest".split())
     terms={synonyms.get(w,w) for w in re.findall(r"[a-z]+",query.lower())}-ignored
-    found=[public(p) for p in CATALOG if (not terms or all(t in " ".join(map(lambda v:str(v).lower(),p.values())) for t in terms)) and (max_price is None or p["price"]<=max_price)]
+    found=[public(p) for p in CATALOG if (not terms or all(t in " ".join(map(lambda v:str(v).lower(),p.values())) for t in terms)) and (max_price is None or p["price"]<=max_price and p["stock"]>0)]
     status="no_match" if not found else "ambiguous" if len(found)>1 else "exact_match"
     log("search_catalog",{"query":query,"max_price":max_price,"actor":"human_chat"},{"status":status,"product_ids":[p["id"] for p in found]},f"The customer asked for {query!r}; catalog search grounds the answer in merchant inventory.")
     return status,found
@@ -216,7 +225,7 @@ def chat_reply(message,session_id):
     text=message.strip(); low=text.lower(); state=sessions.setdefault(session_id,{}); quantity=qty(text); base={"products":[],"order":None}; guard=limits()
     if quantity>guard["max_quantity"]:
         log("guardrail_blocked",{"message":text,"quantity":quantity,"actor":"human_chat"},{"reason":"max_quantity","limit":guard["max_quantity"]},"The customer's quantity exceeds the merchant's current limit."); return {**base,"reply":f"The merchant allows at most {guard['max_quantity']} units per item. Would you like fewer?"}
-    if any(w in low for w in ("hi","hello","hey")) and len(low.split())<=3:return {**base,"reply":"Welcome to Cartwise! What are you shopping for?"}
+    if re.search(r"\b(?:hi|hello|hey)\b",low) and len(low.split())<=3:return {**base,"reply":"Welcome to Cartwise! What are you shopping for?"}
     offered=state.get("upsell")
     accepts_upsell=bool(offered and any(word in low for word in ("add","include","take")) and any(word in low for word in ("sock","bottle",offered["product_id"].lower())))
     if accepts_upsell:
@@ -242,7 +251,8 @@ def chat_reply(message,session_id):
         up=state.get("upsell"); is_up=bool(up and up["product_id"]==p["id"]); state["pending"]={"product_id":p["id"],"quantity":quantity,"upsell_source":is_up,"suggested_after":up["suggested_after"] if is_up else None}
         log("select_product",{"product_id":p["id"],"quantity":quantity,"actor":"human_chat"},{"amount":p["price"]*quantity,"stock":p["stock"]},f"The customer named {p['name']}; it was selected for confirmation before checkout.")
         return {**base,"reply":f"{p['name']} costs {money(p['price'])}. {quantity} × totals {money(p['price']*quantity)}. Say yes to confirm.","products":[public(p)]}
-    status,found=search_catalog(text,budget(text))
+    max_price=budget(text); status,found=search_catalog(text,max_price)
+    if status=="no_match" and max_price is not None:return {**base,"reply":f"There are no in-stock items available at or under {money(max_price)}.","products":[]}
     if status=="no_match":return {**base,"reply":"I couldn't find that in the merchant catalog. Here are available products.","products":[public(p) for p in CATALOG if p["stock"]>0]}
     if "cheapest" in low:
         choices=sorted([p for p in found if p["stock"]>0] or found,key=lambda p:p["price"]); return {**base,"reply":f"The cheapest matching product is {choices[0]['name']} at {money(choices[0]['price'])}.","products":[choices[0]]}
@@ -252,6 +262,17 @@ def chat_reply(message,session_id):
 def home():return FileResponse(ROOT/"static"/"index.html")
 @app.get("/merchant")
 def merchant_page():return FileResponse(ROOT/"static"/"merchant.html")
+@app.get("/merchant/audit")
+def merchant_audit_page():return FileResponse(ROOT/"static"/"merchant.html")
+@app.get("/merchant/settings")
+def merchant_settings_page():return FileResponse(ROOT/"static"/"merchant.html")
+@app.get("/login")
+def login_page():return FileResponse(ROOT/"static"/"auth.html")
+@app.get("/signup")
+def signup_page():return FileResponse(ROOT/"static"/"auth.html")
+@app.get("/api/firebase-config")
+def firebase_config():
+    return {"apiKey":os.getenv("FIREBASE_API_KEY",""),"authDomain":os.getenv("FIREBASE_AUTH_DOMAIN",""),"projectId":os.getenv("FIREBASE_PROJECT_ID",""),"storageBucket":os.getenv("FIREBASE_STORAGE_BUCKET",""),"messagingSenderId":os.getenv("FIREBASE_MESSAGING_SENDER_ID",""),"appId":os.getenv("FIREBASE_APP_ID","")}
 @app.get("/api/catalog")
 def catalog():return {"merchant":"Talk to Buy Store","products":[public(p) for p in CATALOG]}
 @app.post("/api/agent/decide")
@@ -343,6 +364,14 @@ def summary():
             if bundle_id not in completed_ids or bundle_id in orders:continue
             inputs=e.get("inputs") or e.get("input") or {}; addon=product(inputs.get("added_product"))
             if addon:upsells+=addon["price"]
+        # Older checkout lifecycle events predate failure_reason persistence. Reconcile
+        # them from recorded evidence so the dashboard breakdown stays factual.
+        dismissed={(e.get("inputs") or {}).get("order_id") for e in audit_entries if (e.get("tool") or e.get("action"))=="checkout_dismissed"}
+        changed=False
+        for order in values:
+            if order.get("status")=="created" and order.get("id") in dismissed and not order.get("failure_reason"):
+                order["failure_reason"]="checkout_dismissed"; changed=True
+        if changed:save_orders()
     failures=[o for o in values if o.get("status") not in {"paid","completed"}]+list(attempts.values()); breakdown={}
     for item in failures:
         reason=item.get("failure_reason") or ("checkout_not_completed" if item.get("status")=="created" else "unknown"); breakdown[reason]=breakdown.get(reason,0)+1
@@ -356,6 +385,13 @@ def summary():
     return {"revenue":revenue,"upsell_revenue":upsells,"upsell_percent":round(upsells/revenue*100,1) if revenue else 0,"completed":len(paid),"attempted":attempted,"conversion_rate":round(len(paid)/attempted*100,1) if attempted else 0,"failure_breakdown":breakdown,"guardrail_blocks":guardrail_blocks,"actor_breakdown":actor_breakdown,"revenue_series":series[-12:]}
 @app.get("/api/merchant/config")
 def get_config():return limits()
+@app.post("/api/merchant/reset")
+def reset_merchant_data(request:ResetMerchantDataRequest):
+    if request.confirmation!="RESET":raise HTTPException(400,"Type RESET to confirm")
+    orders.clear(); attempts.clear(); negotiations.clear(); agents.clear(); sessions.clear()
+    save_orders(); save_attempts(); save_negotiations(); save_agents()
+    AUDIT.write_text("",encoding="utf-8"); CAMPAIGN.write_text("null",encoding="utf-8")
+    return {"ok":True,"message":"Test transaction data reset. Catalog and guardrail settings were preserved."}
 @app.get("/api/merchant/agents")
 def known_agents():
     items=[]
