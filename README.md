@@ -9,15 +9,15 @@ Cartwise is a catalog-grounded shopping assistant that serves **two kinds of buy
 ## Screenshots
 
 **Storefront (human chat) + Autonomous AI buyer agent, side by side**
-![Storefront and AI buyer agent](<img width="1902" height="911" alt="image" src="https://github.com/user-attachments/assets/f71f8d39-a5a8-4af2-ae6e-cc900ed101ec"/>
+![Storefront and AI buyer agent](<img width="1902" height="911" alt="image" src="https://github.com/user-attachments/assets/f042ab72-896f-4b74-8410-bf909b25793b" />
 )
 
 **Merchant dashboard — revenue, guardrails, campaign orchestrator**
-![Merchant dashboard](<img width="1905" height="917" alt="image" src="https://github.com/user-attachments/assets/17c72251-fec6-40c6-9f30-2007eb420401"/>
+![Merchant dashboard](<img width="1905" height="917" alt="image" src="https://github.com/user-attachments/assets/17c72251-fec6-40c6-9f30-2007eb420401" />
 )
 
 **Explainable audit trail — every action tagged by type and actor (human vs AI buyer)**
-![Audit trail](<img width="1912" height="906" alt="image" src="https://github.com/user-attachments/assets/27f51f56-1e2b-4cbe-87f1-ac3d2dfb8d25"/>
+![Audit trail](<img width="1912" height="906" alt="image" src="https://github.com/user-attachments/assets/27f51f56-1e2b-4cbe-87f1-ac3d2dfb8d25" />
 )
 
 ---
